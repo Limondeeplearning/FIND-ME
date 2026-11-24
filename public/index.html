@@ -153,6 +153,28 @@
         <span><b>Tap to arm sound &amp; vibration</b><small>Needed once after opening the page</small></span>
       </button>
 
+      <!-- SMS fallback: shown when notifications can't be confirmed on this phone -->
+      <div class="card sms-card" id="sms-card" hidden>
+        <p class="card-kicker warn" id="sms-kicker">Get your alert by text</p>
+        <h2 id="sms-title">Notifications can't reach this phone</h2>
+        <p class="muted" id="sms-text">Enter your mobile number and we'll text you when it's your turn. No settings needed.</p>
+        <form id="sms-form" novalidate>
+          <label for="mobile" class="sr-only">Mobile number</label>
+          <div class="copy-row">
+            <input id="mobile" type="tel" inputmode="tel" autocomplete="tel" placeholder="09XX XXX XXXX" maxlength="16">
+            <button class="mini" id="sms-save" type="submit">Save</button>
+          </div>
+          <p class="error" id="sms-error" role="alert" hidden></p>
+          <p class="fineprint">Used only to text you during this ceremony. Deleted after the event.</p>
+        </form>
+        <div id="sms-saved" hidden>
+          <p class="sms-ok"><b>✓ We'll text <span id="sms-masked"></span></b> when it's your turn.</p>
+          <p class="muted" id="sms-note"></p>
+          <button class="link" id="sms-change" type="button">Change number</button>
+        </div>
+      </div>
+      <button class="link sms-link" id="sms-link" type="button" hidden>Also get a text message</button>
+
       <ul class="checks card" aria-label="Alert readiness">
         <li id="chk-notif" class="chk"><span class="dot" aria-hidden="true"></span><span><b>Lock-screen alerts</b><small>Checking…</small></span><button type="button" class="mini" id="notif-btn" hidden>Turn on</button></li>
         <li id="chk-vibe" class="chk"><span class="dot" aria-hidden="true"></span><span><b>Vibration</b><small>Checking…</small></span></li>

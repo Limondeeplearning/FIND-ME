@@ -16,6 +16,7 @@ export default async function handler(req, res) {
         title: data.title,
         message: data.message,
         registrationOpen: data.registrationOpen !== false,
+        smsAvailable: data.smsAvailable === true,
         alerts: Array.isArray(data.alerts) ? data.alerts : [],
         devices: data.devices || {},
         claims: data.claims || {},

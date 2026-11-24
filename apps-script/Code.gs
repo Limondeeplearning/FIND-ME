@@ -16,6 +16,11 @@
  *    turns RED with a note. Staff unregister the wrong person → that phone is
  *    told to register again, and the person who asked gets the seat automatically.
  *  • Same name registered at two seats → both flagged red.
+ *  • DONE ☑ (award received) greys the seat and blocks alerts; untick to call again.
+ *  • UNREGISTER ☑ in the registry = same as the Unregister menu, per seat.
+ *  • Phones that can't get push notifications can give a mobile number → SMS
+ *    via Semaphore (📣 Find Me → 📱 Set up SMS). "Alert via" shows how each
+ *    seat will be reached: Push ✓ (confirmed), SMS, or Page only.
  *  • Each participant's name is written in the cell directly above their seat
  *    on the seat map (e.g. row 9 for row-A seats in row 10). Selecting the
  *    name cell works the same as selecting the seat.
@@ -29,20 +34,26 @@ var SEAT_RE = /^[A-Z]{1,2}\d{1,3}$/;
 
 // Registry columns (1-based)
 var C = {
-  SEAT: 1, NAME: 2, REGISTERED: 3, ALERT: 4, STATUS: 5, ALERTED_AT: 6, ACK_AT: 7, COUNT: 8,
-  MAP_CELL: 9, DEVICE: 10, SUB: 11, ALERT_ID: 12, LAST_SENT: 13, ORIG_BG: 14,
-  ISSUE: 15, CLAIM: 16, NAME_CELL: 17
+  SEAT: 1, NAME: 2, REGISTERED: 3, ALERT: 4, DONE: 5, UNREG: 6, STATUS: 7, VIA: 8,
+  ALERTED_AT: 9, ACK_AT: 10, COUNT: 11, ISSUE: 12,
+  // hidden from here on
+  MOBILE: 13, MAP_CELL: 14, DEVICE: 15, SUB: 16, ALERT_ID: 17, LAST_SENT: 18, ORIG_BG: 19,
+  CLAIM: 20, NAME_CELL: 21, PUSH_OK: 22
 };
-var NCOLS = 17;
-var HEADERS = ['Seat', 'Name', 'Registered', 'ALERT', 'Status', 'First alerted', 'On my way at', 'Alerts sent',
-  'Map cell', 'Device', 'Push subscription', 'Alert ID', 'Last sent', 'Original colour', '⚠ Issue', 'Claim (hidden)', 'Name cell (hidden)'];
+var NCOLS = 22;
+// Header text is used to carry data over when columns move between versions — keep names stable.
+var HEADERS = ['Seat', 'Name', 'Registered', 'ALERT', 'DONE', 'UNREGISTER', 'Status', 'Alert via',
+  'First alerted', 'On my way at', 'Alerts sent', '⚠ Issue',
+  'Mobile (hidden)', 'Map cell', 'Device', 'Push subscription', 'Alert ID', 'Last sent', 'Original colour',
+  'Claim (hidden)', 'Name cell (hidden)', 'Push confirmed (hidden)'];
 
-var STATUS = { NONE: '', REGISTERED: 'Registered', ALERTED: 'Alerted', ON_THE_WAY: 'On the way' };
+var STATUS = { NONE: '', REGISTERED: 'Registered', ALERTED: 'Alerted', ON_THE_WAY: 'On the way', DONE: 'Done ✓' };
 var COLORS = {
   registeredBorder: '#2563EB',
   alertedFill: '#FDBA74', alertedBorder: '#C2410C',
   onWayFill: '#86EFAC', onWayBorder: '#15803D',
   issueFill: '#FCA5A5', issueBorder: '#B91C1C',
+  doneFill: '#D1D5DB', doneBorder: '#4B5563',
   plainBorder: '#BDBDBD'
 };
 
@@ -58,8 +69,14 @@ var DEFAULT_SETTINGS = [
   ['Seat map tab', DEFAULT_MAP, 'Exact name of the seat map tab'],
   ['Re-alert after (seconds)', 60, 'Resend to seats that have not tapped "On my way" (checked about once a minute; 0 = off)'],
   ['Max alerts per seat', 3, 'Stop re-alerting after this many sends'],
-  ['Registration open', true, 'Untick to stop new registrations']
+  ['Registration open', true, 'Untick to stop new registrations'],
+  ['SMS enabled', true, 'Text phones that gave a mobile number (needs 📣 Find Me → 📱 Set up SMS)'],
+  ['SMS sender name', '', 'Your approved Semaphore sender name. Leave blank to use Semaphore\'s default.'],
+  ['SMS on re-alerts', true, 'Also text again when a seat is re-alerted'],
+  ['SMS confirmation text', true, 'Send a short text when someone saves their number, so typos are caught early'],
+  ['SMS priority (faster)', true, 'Semaphore priority route: skips the queue, costs 2 credits per text']
 ];
+var CHECKBOX_SETTINGS = ['Registration open', 'SMS enabled', 'SMS on re-alerts', 'SMS confirmation text', 'SMS priority (faster)'];
 
 /* ======================= MENU ======================= */
 function onOpen() {
@@ -69,6 +86,9 @@ function onOpen() {
     .addItem('✖ Unregister selected seats (phone is told to register again)', 'menuUnregisterSelected')
     .addItem('⚠ Dismiss "this is my seat" claim on selected seats', 'menuDismissClaim')
     .addSeparator()
+    .addItem('✓ Mark selected seats DONE (award received)', 'menuMarkDone')
+    .addItem('↺ Undo DONE on selected seats (to call them again)', 'menuUndoDone')
+    .addSeparator()
     .addItem('📊 Status summary', 'menuSummary')
     .addItem('↺ Cancel ALL alerts', 'menuCancelAll')
     .addItem('🗑 Clear ALL registrations (after the event)', 'menuClearAll')
@@ -77,6 +97,8 @@ function onOpen() {
     .addItem('🔗 2. Connect to Vercel', 'menuConnect')
     .addItem('🔑 Show shared secret', 'menuShowSecret')
     .addItem('🧪 Test connection', 'menuTestConnection')
+    .addItem('📱 Set up SMS (Semaphore)', 'menuSetupSms')
+    .addItem('📱 Send a test SMS', 'menuTestSms')
     .addToUi();
 }
 
@@ -97,9 +119,13 @@ function setup() {
   var sh = ss.getSheetByName(REG_SHEET);
   var old = {}, oldNameCells = {};
   if (sh) {
-    var last = sh.getLastRow();
+    var last = sh.getLastRow(), lastCol = Math.max(sh.getLastColumn(), 1);
     if (last > 1) {
-      sh.getRange(2, 1, last - 1, NCOLS).getValues().forEach(function (row) {
+      // Map old columns to new ones by header text, so upgrades keep every registration.
+      var oldHeaders = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+      var fromCol = HEADERS.map(function (h) { return oldHeaders.indexOf(h); });
+      sh.getRange(2, 1, last - 1, lastCol).getValues().forEach(function (src) {
+        var row = fromCol.map(function (k) { return k >= 0 ? src[k] : ''; });
         if (row[0]) old[row[0]] = row;
         if (row[C.NAME_CELL - 1]) oldNameCells[String(row[C.NAME_CELL - 1])] = true;
       });
@@ -155,15 +181,22 @@ function setup() {
     row[C.MAP_CELL - 1] = s.cell;
     row[C.NAME_CELL - 1] = s.nameCell;
     row[C.ALERT - 1] = row[C.ALERT - 1] === true;
+    row[C.DONE - 1] = row[C.DONE - 1] === true;
+    row[C.UNREG - 1] = false;
     if (!row[C.ORIG_BG - 1]) row[C.ORIG_BG - 1] = s.bg || '#ffffff';
+    row[C.VIA - 1] = via_(row);
     return row;
   });
 
   sh.clear();
+  if (sh.getMaxColumns() < NCOLS) sh.insertColumnsAfter(sh.getMaxColumns(), NCOLS - sh.getMaxColumns());
+  sh.showColumns(1, NCOLS);
   sh.getRange(1, 1, 1, NCOLS).setValues([HEADERS]).setFontWeight('bold').setBackground('#111827').setFontColor('#ffffff');
   sh.getRange(2, 1, rows.length, NCOLS).setValues(rows);
   sh.setFrozenRows(1);
   sh.getRange(2, C.ALERT, rows.length, 1).insertCheckboxes();
+  sh.getRange(2, C.DONE, rows.length, 1).insertCheckboxes();
+  sh.getRange(2, C.UNREG, rows.length, 1).insertCheckboxes();
   sh.getRange(2, C.REGISTERED, rows.length, 1).setNumberFormat('h:mm:ss am/pm');
   sh.getRange(2, C.ALERTED_AT, rows.length, 1).setNumberFormat('h:mm:ss am/pm');
   sh.getRange(2, C.ACK_AT, rows.length, 1).setNumberFormat('h:mm:ss am/pm');
@@ -172,8 +205,8 @@ function setup() {
   sh.setColumnWidth(C.NAME, 240);
   sh.setColumnWidth(C.STATUS, 110);
   sh.setColumnWidth(C.ISSUE, 360);
-  sh.hideColumns(C.MAP_CELL, C.ORIG_BG - C.MAP_CELL + 1);
-  sh.hideColumns(C.CLAIM, NCOLS - C.CLAIM + 1);
+  sh.setColumnWidth(C.VIA, 130);
+  sh.hideColumns(C.MOBILE, NCOLS - C.MOBILE + 1);
 
   // Name cells on the seat map: small, wrapped text so long names fit.
   var nameCells = seats.filter(function (s) { return s.nameCell; }).map(function (s) { return s.nameCell; });
@@ -188,7 +221,9 @@ function setup() {
     SpreadsheetApp.newConditionalFormatRule().whenTextContains('⚠').setBackground(COLORS.issueFill).setBold(true).setRanges([issueRange]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(STATUS.ALERTED).setBackground(COLORS.alertedFill).setBold(true).setRanges([statusRange]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(STATUS.ON_THE_WAY).setBackground(COLORS.onWayFill).setBold(true).setRanges([statusRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(STATUS.REGISTERED).setBackground('#DBEAFE').setRanges([statusRange]).build()
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(STATUS.REGISTERED).setBackground('#DBEAFE').setRanges([statusRange]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(STATUS.DONE).setBackground(COLORS.doneFill).setBold(true).setRanges([statusRange]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Page only').setBackground('#FEF3C7').setRanges([sh.getRange(2, C.VIA, rows.length, 1)]).build()
   ]);
 
   // Repaint the map for any existing registrations / issues.
@@ -206,20 +241,30 @@ function setup() {
     (noName.length ? ' (no free cell above: ' + noName.slice(0, 12).join(', ') + (noName.length > 12 ? '…' : '') + ')' : '') + '.';
   if (dupes.length) msg += '\n\n⚠ Duplicate seat labels (fix these on the map, then run setup again):\n' + dupes.join('\n');
   if (!PropertiesService.getScriptProperties().getProperty('VERCEL_URL')) msg += '\n\nNext: 📣 Find Me → 🔗 2. Connect to Vercel.';
+  if (!PropertiesService.getScriptProperties().getProperty('SEMAPHORE_KEY')) msg += '\n\nSMS fallback is not set up yet: 📣 Find Me → 📱 Set up SMS.';
   ui.alert('Find Me', msg, ui.ButtonSet.OK);
 }
 
 function ensureSettingsSheet_() {
   var ss = SpreadsheetApp.getActive();
   var sh = ss.getSheetByName(SET_SHEET);
-  if (sh) return sh;
-  sh = ss.insertSheet(SET_SHEET);
-  sh.getRange(1, 1, 1, 3).setValues([['Setting', 'Value', 'Notes']]).setFontWeight('bold').setBackground('#111827').setFontColor('#ffffff');
-  sh.getRange(2, 1, DEFAULT_SETTINGS.length, 3).setValues(DEFAULT_SETTINGS);
-  sh.getRange(2 + DEFAULT_SETTINGS.length - 1, 2).insertCheckboxes().setValue(true);
-  sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 520); sh.setColumnWidth(3, 420);
-  sh.getRange(2, 2, DEFAULT_SETTINGS.length, 1).setWrap(true);
-  sh.setFrozenRows(1);
+  if (!sh) {
+    sh = ss.insertSheet(SET_SHEET);
+    sh.getRange(1, 1, 1, 3).setValues([['Setting', 'Value', 'Notes']]).setFontWeight('bold').setBackground('#111827').setFontColor('#ffffff');
+    sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 520); sh.setColumnWidth(3, 420);
+    sh.setFrozenRows(1);
+  }
+  // Add any settings this version introduced (existing values are never touched).
+  var have = {};
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().forEach(function (r) { have[String(r[0]).trim()] = true; });
+  DEFAULT_SETTINGS.forEach(function (d) {
+    if (have[d[0]]) return;
+    var r = sh.getLastRow() + 1;
+    sh.getRange(r, 1, 1, 3).setValues([d]);
+    sh.getRange(r, 2).setWrap(true);
+    if (CHECKBOX_SETTINGS.indexOf(d[0]) >= 0) sh.getRange(r, 2).insertCheckboxes().setValue(d[1] === true);
+  });
+  _settings = null;
   return sh;
 }
 
@@ -243,13 +288,19 @@ function getSettings_() {
     sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) { map[String(r[0]).trim()] = r[1]; });
   }
   var num = function (v, d) { var n = Number(v); return isNaN(n) || v === '' ? d : n; };
+  var bool = function (k, d) { var v = map[k]; return v === undefined || v === '' ? d : v !== false && String(v).toUpperCase() !== 'FALSE'; };
   _settings = {
     title: String(map['Alert title'] || DEFAULT_SETTINGS[0][1]).slice(0, 80),
     message: String(map['Alert message'] || DEFAULT_SETTINGS[1][1]).slice(0, 300),
     mapTab: String(map['Seat map tab'] || DEFAULT_MAP).trim(),
     realertSec: num(map['Re-alert after (seconds)'], 60),
     maxAlerts: num(map['Max alerts per seat'], 3),
-    registrationOpen: map['Registration open'] === undefined ? true : map['Registration open'] !== false && String(map['Registration open']).toUpperCase() !== 'FALSE'
+    registrationOpen: bool('Registration open', true),
+    smsEnabled: bool('SMS enabled', true),
+    smsSender: String(map['SMS sender name'] || '').trim(),
+    smsOnRealert: bool('SMS on re-alerts', true),
+    smsConfirm: bool('SMS confirmation text', true),
+    smsPriority: bool('SMS priority (faster)', true)
   };
   return _settings;
 }
@@ -264,7 +315,20 @@ function getRegistry_() {
   rows.forEach(function (r, i) { if (r[0]) index[String(r[0])] = i; });
   return { sheet: sh, rows: rows, index: index };
 }
-function writeRow_(reg, i) { reg.sheet.getRange(i + 2, 1, 1, NCOLS).setValues([reg.rows[i]]); }
+function writeRow_(reg, i) {
+  reg.rows[i][C.VIA - 1] = via_(reg.rows[i]);
+  reg.sheet.getRange(i + 2, 1, 1, NCOLS).setValues([reg.rows[i]]);
+}
+
+/** How this seat will be reached: "Push ✓" (confirmed), "Push (unconfirmed)", "SMS", or "Page only". */
+function via_(row) {
+  if (!row[C.NAME - 1]) return '';
+  var parts = [];
+  if (row[C.PUSH_OK - 1]) parts.push('Push ✓');
+  else if (row[C.SUB - 1]) parts.push('Push (unconfirmed)');
+  if (row[C.MOBILE - 1]) parts.push('SMS');
+  return parts.length ? parts.join(' + ') : 'Page only';
+}
 
 var _map = null;
 function mapSheet_() {
@@ -305,6 +369,8 @@ function paintSeat_(map, row) {
     rg.setBackground(COLORS.alertedFill).setBorder(true, true, true, true, false, false, COLORS.alertedBorder, thick).setFontWeight('bold');
   } else if (status === STATUS.ON_THE_WAY) {
     rg.setBackground(COLORS.onWayFill).setBorder(true, true, true, true, false, false, COLORS.onWayBorder, thick).setFontWeight('bold');
+  } else if (status === STATUS.DONE) {
+    rg.setBackground(COLORS.doneFill).setBorder(true, true, true, true, false, false, COLORS.doneBorder, thick).setFontWeight('bold');
   } else if (row[C.ISSUE - 1]) {
     rg.setBackground(COLORS.issueFill).setBorder(true, true, true, true, false, false, COLORS.issueBorder, thick).setFontWeight('bold');
   } else if (row[C.NAME - 1]) {
@@ -320,7 +386,7 @@ function alertSeats_(seats, opts) {
   var lock = LockService.getScriptLock();
   lock.waitLock(25000);
   var settings = getSettings_();
-  var targets = [], notRegistered = [], unknown = [], alerted = [];
+  var targets = [], notRegistered = [], unknown = [], alerted = [], done = [], sms = [];
   var reg;
   try {
     reg = getRegistry_();
@@ -331,6 +397,11 @@ function alertSeats_(seats, opts) {
       var row = reg.rows[i];
       if (!row[C.NAME - 1]) {
         notRegistered.push(seat);
+        if (row[C.ALERT - 1] === true) { row[C.ALERT - 1] = false; writeRow_(reg, i); }
+        return;
+      }
+      if (row[C.DONE - 1] === true) {
+        done.push(seat);
         if (row[C.ALERT - 1] === true) { row[C.ALERT - 1] = false; writeRow_(reg, i); }
         return;
       }
@@ -346,7 +417,8 @@ function alertSeats_(seats, opts) {
       writeRow_(reg, i);
       paintSeat_(null, row);
       alerted.push(seat);
-      if (row[C.SUB - 1]) targets.push({ type: 'alert', seat: seat, alertId: id, subscription: String(row[C.SUB - 1]) });
+      if (row[C.SUB - 1]) targets.push({ type: 'alert', seat: seat, alertId: id, device: String(row[C.DEVICE - 1]), subscription: String(row[C.SUB - 1]) });
+      if (row[C.MOBILE - 1] && (!opts.realert || settings.smsOnRealert)) sms.push({ seat: seat, number: String(row[C.MOBILE - 1]) });
     });
     invalidate_();
     SpreadsheetApp.flush();
@@ -358,7 +430,18 @@ function alertSeats_(seats, opts) {
   if (targets.length) push = sendPush_(targets, settings);
   if (push.expiredTargets.length) clearSubscriptions_(push.expiredTargets);
 
-  return { alerted: alerted, notRegistered: notRegistered, unknown: unknown, push: push, noPush: alerted.length - targets.length };
+  var smsOut = { sent: [], failed: [], error: '' };
+  if (sms.length) {
+    smsOut = sendSms_(sms.map(function (m) {
+      return { seat: m.seat, number: m.number, text: smsText_(settings, m.seat) };
+    }), settings);
+  }
+  var reached = {};
+  push.sent.forEach(function (x) { reached[x] = true; });
+  smsOut.sent.forEach(function (x) { reached[x] = true; });
+  var pageOnly = alerted.filter(function (x) { return !reached[x]; });
+
+  return { alerted: alerted, notRegistered: notRegistered, unknown: unknown, done: done, push: push, sms: smsOut, pageOnly: pageOnly, noPush: alerted.length - targets.length };
 }
 
 function sendPush_(targets, settings) {
@@ -445,10 +528,10 @@ function refreshIssues_(reg) {
   });
 }
 
-function noticeTarget_(kind, seat, subscription) {
+function noticeTarget_(kind, seat, subscription, device) {
   var n = NOTICE[kind];
   return {
-    type: kind, seat: seat, alertId: kind + '-' + Date.now(), subscription: String(subscription),
+    type: kind, seat: seat, alertId: kind + '-' + Date.now(), subscription: String(subscription), device: device || '',
     title: n.title, message: n.message.replace('{seat}', seat)
   };
 }
@@ -464,7 +547,7 @@ function cancelSeats_(seats) {
       if (i === undefined) return;
       var row = reg.rows[i];
       row[C.ALERT - 1] = false;
-      row[C.STATUS - 1] = row[C.NAME - 1] ? STATUS.REGISTERED : STATUS.NONE;
+      row[C.STATUS - 1] = !row[C.NAME - 1] ? STATUS.NONE : (row[C.DONE - 1] === true ? STATUS.DONE : STATUS.REGISTERED);
       row[C.ALERT_ID - 1] = '';
       row[C.COUNT - 1] = '';
       row[C.ALERTED_AT - 1] = '';
@@ -480,9 +563,11 @@ function cancelSeats_(seats) {
 }
 
 function clearRow_(row) {
-  [C.NAME, C.REGISTERED, C.STATUS, C.ALERTED_AT, C.ACK_AT, C.COUNT, C.DEVICE, C.SUB, C.ALERT_ID, C.LAST_SENT]
+  [C.NAME, C.REGISTERED, C.STATUS, C.ALERTED_AT, C.ACK_AT, C.COUNT, C.DEVICE, C.SUB, C.ALERT_ID, C.LAST_SENT, C.MOBILE, C.PUSH_OK]
     .forEach(function (col) { row[col - 1] = ''; });
   row[C.ALERT - 1] = false;
+  row[C.DONE - 1] = false;
+  row[C.UNREG - 1] = false;
 }
 
 /**
@@ -506,7 +591,7 @@ function releaseSeat_(reg, i, notify) {
     row[C.DEVICE - 1] = claim.device;
     row[C.SUB - 1] = claim.sub || '';
     row[C.STATUS - 1] = STATUS.REGISTERED;
-    if (claim.sub) targets.push(noticeTarget_('granted', seat, claim.sub));
+    if (claim.sub) targets.push(noticeTarget_('granted', seat, claim.sub, claim.device));
   }
   row[C.CLAIM - 1] = '';
   writeRow_(reg, i);
@@ -634,7 +719,11 @@ function summaryText_(r) {
   var parts = [];
   if (r.alerted.length) parts.push('Alerted ' + r.alerted.length + ': ' + r.alerted.join(', '));
   if (r.push.sent.length) parts.push('Push sent to ' + r.push.sent.length);
-  if (r.noPush > 0) parts.push(r.noPush + ' without lock-screen alerts (page-open only)');
+  if (r.sms && r.sms.sent.length) parts.push('SMS sent to ' + r.sms.sent.length);
+  if (r.pageOnly && r.pageOnly.length) parts.push('⚠ Only reachable if their page is open — watch these: ' + r.pageOnly.join(', '));
+  if (r.done && r.done.length) parts.push('Skipped (marked DONE — untick DONE to alert again): ' + r.done.join(', '));
+  if (r.sms && r.sms.failed.length) parts.push('⚠ SMS failed: ' + r.sms.failed.join(', '));
+  if (r.sms && r.sms.error) parts.push('⚠ SMS: ' + r.sms.error);
   if (r.notRegistered.length) parts.push('⚠ Not registered — send an usher: ' + r.notRegistered.join(', '));
   if (r.unknown.length) parts.push('⚠ Not on map: ' + r.unknown.join(', '));
   if (r.push.expired.length) parts.push('⚠ Notifications expired: ' + r.push.expired.join(', '));
@@ -657,11 +746,77 @@ function menuUnregisterSelected() {
     '\n\n• The name and phone link are removed.\n• That phone gets a notification to register again.' +
     '\n• If someone said "this is my seat" (red seat), they get the seat automatically.', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
   var r = unregisterSeats_(seats, { notify: true });
-  var msg = 'Unregistered ' + r.count + ' seat(s).';
+  SpreadsheetApp.getActive().toast(unregText_(r, seats), 'Find Me', 8);
+}
+
+function unregText_(r, seats) {
+  var msg = 'Unregistered ' + r.count + ' seat(s): ' + seats.join(', ');
   if (r.notified) msg += '\nRegister-again notice sent to ' + r.notified + ' phone(s).';
   if (r.granted.length) msg += '\nSeat given to: ' + r.granted.join(', ');
   if (r.pushError) msg += '\n⚠ ' + r.pushError;
-  SpreadsheetApp.getActive().toast(msg, 'Find Me', 8);
+  return msg;
+}
+
+/* ======================= DONE (award received) ======================= */
+function markDone_(seats) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  var n = 0;
+  try {
+    var reg = getRegistry_();
+    seats.forEach(function (seat) {
+      var i = reg.index[seat];
+      if (i === undefined) return;
+      var row = reg.rows[i];
+      if (!row[C.NAME - 1]) { if (row[C.DONE - 1] === true) { row[C.DONE - 1] = false; writeRow_(reg, i); } return; }
+      row[C.DONE - 1] = true;
+      row[C.ALERT - 1] = false;
+      row[C.STATUS - 1] = STATUS.DONE;   // also stops any running alert / re-alerts
+      writeRow_(reg, i);
+      paintSeat_(null, row);
+      n++;
+    });
+    invalidate_();
+  } finally { lock.releaseLock(); }
+  return n;
+}
+
+function undoDone_(seats) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  var n = 0;
+  try {
+    var reg = getRegistry_();
+    seats.forEach(function (seat) {
+      var i = reg.index[seat];
+      if (i === undefined) return;
+      var row = reg.rows[i];
+      row[C.DONE - 1] = false;
+      row[C.ALERT - 1] = false;
+      row[C.STATUS - 1] = row[C.NAME - 1] ? STATUS.REGISTERED : STATUS.NONE;
+      // Fresh start for the next call (re-alert counter etc.).
+      [C.ALERTED_AT, C.ACK_AT, C.COUNT, C.ALERT_ID, C.LAST_SENT].forEach(function (col) { row[col - 1] = ''; });
+      writeRow_(reg, i);
+      paintSeat_(null, row);
+      n++;
+    });
+    invalidate_();
+  } finally { lock.releaseLock(); }
+  return n;
+}
+
+function menuMarkDone() {
+  var seats = selectedSeats_();
+  if (!seats.length) { SpreadsheetApp.getActive().toast('Select the seat(s) first.', 'Find Me', 5); return; }
+  var n = markDone_(seats);
+  SpreadsheetApp.getActive().toast(n ? 'Marked DONE: ' + n + ' seat(s). Use "Undo DONE" to call them again.' : 'No registered seats selected.', 'Find Me', 6);
+}
+
+function menuUndoDone() {
+  var seats = selectedSeats_();
+  if (!seats.length) { SpreadsheetApp.getActive().toast('Select the seat(s) first.', 'Find Me', 5); return; }
+  var n = undoDone_(seats);
+  SpreadsheetApp.getActive().toast('Ready to alert again: ' + n + ' seat(s).', 'Find Me', 5);
 }
 
 function menuDismissClaim() {
@@ -673,19 +828,25 @@ function menuDismissClaim() {
 
 function menuSummary() {
   var reg = getRegistry_();
-  var c = { total: reg.rows.length, registered: 0, push: 0, alerted: 0, onWay: 0 };
-  var waiting = [], issues = [];
+  var c = { total: reg.rows.length, registered: 0, push: 0, pushOk: 0, sms: 0, pageOnly: 0, alerted: 0, onWay: 0, done: 0 };
+  var waiting = [], issues = [], pageOnly = [];
   reg.rows.forEach(function (r) {
     if (r[C.NAME - 1]) c.registered++;
     if (r[C.SUB - 1]) c.push++;
+    if (r[C.NAME - 1] && r[C.PUSH_OK - 1]) c.pushOk++;
+    if (r[C.NAME - 1] && r[C.MOBILE - 1]) c.sms++;
+    if (r[C.NAME - 1] && !r[C.PUSH_OK - 1] && !r[C.MOBILE - 1]) { c.pageOnly++; pageOnly.push(r[0]); }
+    if (r[C.STATUS - 1] === STATUS.DONE) c.done++;
     if (r[C.STATUS - 1] === STATUS.ALERTED) { c.alerted++; waiting.push(r[0]); }
     if (r[C.STATUS - 1] === STATUS.ON_THE_WAY) c.onWay++;
     if (r[C.ISSUE - 1]) issues.push(r[0]);
   });
   SpreadsheetApp.getUi().alert('📊 Find Me status',
-    'Seats: ' + c.total + '\nRegistered: ' + c.registered + '\nWith lock-screen alerts: ' + c.push +
+    'Seats: ' + c.total + '\nRegistered: ' + c.registered +
+    '\n\nReachable by push (confirmed): ' + c.pushOk + '\nReachable by SMS: ' + c.sms +
+    '\n⚠ Not confirmed (page-open only or push unconfirmed): ' + c.pageOnly + (pageOnly.length ? ' (' + pageOnly.slice(0, 30).join(', ') + (pageOnly.length > 30 ? '…' : '') + ')' : '') +
     '\n\nAlerted, waiting for reply: ' + c.alerted + (waiting.length ? ' (' + waiting.join(', ') + ')' : '') +
-    '\nOn the way: ' + c.onWay +
+    '\nOn the way: ' + c.onWay + '\nDone (award received): ' + c.done +
     '\n\n⚠ Seats needing staff (red): ' + issues.length + (issues.length ? ' (' + issues.join(', ') + ')' : ''), SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
@@ -701,7 +862,7 @@ function menuCancelAll() {
 
 function menuClearAll() {
   var ui = SpreadsheetApp.getUi();
-  if (ui.alert('Clear ALL registrations?', 'Deletes every name and phone link and restores the seat map colours.\nUse this after the event (Data Privacy). This cannot be undone.', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  if (ui.alert('Clear ALL registrations?', 'Deletes every name, mobile number and phone link and restores the seat map colours.\nUse this after the event (Data Privacy). This cannot be undone.', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
   var reg = getRegistry_();
   var r = unregisterSeats_(reg.rows.map(function (row) { return String(row[0]); }), { wipe: true });
   SpreadsheetApp.getActive().toast('Cleared ' + r.count + ' seats.', 'Find Me', 5);
@@ -768,22 +929,38 @@ function handleEdit(e) {
     var lk = LockService.getScriptLock(); lk.waitLock(20000);
     try { refreshIssues_(getRegistry_()); } finally { lk.releaseLock(); }
   }
-  if (rg.getColumn() > C.ALERT || rg.getLastColumn() < C.ALERT) return;
+  var touches = function (col) { return rg.getColumn() <= col && rg.getLastColumn() >= col; };
+  if (!touches(C.ALERT) && !touches(C.DONE) && !touches(C.UNREG)) return;
   var startRow = Math.max(rg.getRow(), 2);
   var n = rg.getLastRow() - startRow + 1;
   if (n <= 0) return;
-  var vals = sh.getRange(startRow, 1, n, C.STATUS).getValues();
-  var toAlert = [], toCancel = [];
-  vals.forEach(function (r) {
+  var vals = sh.getRange(startRow, 1, n, NCOLS).getValues();
+  var toAlert = [], toCancel = [], toDone = [], toUndo = [], toUnreg = [], emptyUnreg = [];
+  vals.forEach(function (r, k) {
     var seat = normSeat_(r[C.SEAT - 1]);
     if (!SEAT_RE.test(seat)) return;
-    if (r[C.ALERT - 1] === true && r[C.STATUS - 1] !== STATUS.ALERTED) toAlert.push(seat);
-    if (r[C.ALERT - 1] !== true && r[C.STATUS - 1] === STATUS.ALERTED) toCancel.push(seat);
+    if (touches(C.UNREG) && r[C.UNREG - 1] === true) {
+      if (r[C.NAME - 1]) toUnreg.push(seat); else emptyUnreg.push(startRow + k);
+      return;
+    }
+    if (touches(C.DONE)) {
+      if (r[C.DONE - 1] === true && r[C.STATUS - 1] !== STATUS.DONE) toDone.push(seat);
+      if (r[C.DONE - 1] !== true && r[C.STATUS - 1] === STATUS.DONE) toUndo.push(seat);
+    }
+    if (touches(C.ALERT)) {
+      if (r[C.ALERT - 1] === true && r[C.STATUS - 1] !== STATUS.ALERTED) toAlert.push(seat);
+      if (r[C.ALERT - 1] !== true && r[C.STATUS - 1] === STATUS.ALERTED) toCancel.push(seat);
+    }
   });
-  if (toAlert.length) {
-    var res = alertSeats_(toAlert);
-    SpreadsheetApp.getActive().toast(summaryText_(res), '📣 Find Me', 8);
+  var ss = SpreadsheetApp.getActive();
+  emptyUnreg.forEach(function (rowNum) { sh.getRange(rowNum, C.UNREG).setValue(false); });
+  if (toUnreg.length) {
+    var u = unregisterSeats_(toUnreg, { notify: true });
+    ss.toast(unregText_(u, toUnreg), 'Find Me', 8);
   }
+  if (toDone.length) { markDone_(toDone); ss.toast('Marked DONE: ' + toDone.join(', ') + '\nUntick DONE to call them again.', 'Find Me', 6); }
+  if (toUndo.length) { undoDone_(toUndo); ss.toast('Ready to alert again: ' + toUndo.join(', '), 'Find Me', 6); }
+  if (toAlert.length) ss.toast(summaryText_(alertSeats_(toAlert)), '📣 Find Me', 8);
   if (toCancel.length) cancelSeats_(toCancel);
 }
 
@@ -817,6 +994,7 @@ function alertsPayload_() {
   });
   var payload = {
     ok: true, title: s.title, message: s.message, registrationOpen: s.registrationOpen,
+    smsAvailable: !!(s.smsEnabled && PropertiesService.getScriptProperties().getProperty('SEMAPHORE_KEY')),
     alerts: alerts, devices: devices, claims: claims, generatedAt: startedAt
   };
   cache.put('alerts', JSON.stringify(payload), 10);
@@ -880,6 +1058,8 @@ function doPost(e) {
     if (d.action === 'ack') return json_(ack_(d));
     if (d.action === 'claim') return json_(claim_(d));
     if (d.action === 'unclaim') return json_(unclaim_(d));
+    if (d.action === 'mobile') return json_(setMobile_(d));
+    if (d.action === 'pushok') return json_(pushOk_(d));
     return json_({ ok: false, code: 'UNKNOWN_ACTION' });
   } catch (err) {
     return json_({ ok: false, code: 'ERROR', error: String(err.message || err) });
@@ -924,10 +1104,13 @@ function register_(d) {
 
 /** Puts name/device on row i. Frees any other seat or claim this phone held. Returns push targets. */
 function writeRegistration_(reg, i, name, device, subscription) {
-  var targets = [];
+  var targets = [], carriedMobile = '';
   reg.rows.forEach(function (r, j) {
     if (j === i) return;
-    if (r[C.DEVICE - 1] === device) targets = targets.concat(releaseSeat_(reg, j, false)); // phone moved seats
+    if (r[C.DEVICE - 1] === device) {                                                       // phone moved seats
+      if (r[C.MOBILE - 1]) carriedMobile = r[C.MOBILE - 1];
+      targets = targets.concat(releaseSeat_(reg, j, false));
+    }
     var cl = parseClaim_(r[C.CLAIM - 1]);
     if (cl && cl.device === device) { r[C.CLAIM - 1] = ''; writeRow_(reg, j); }       // drop old claim
   });
@@ -936,12 +1119,131 @@ function writeRegistration_(reg, i, name, device, subscription) {
   if (cl2 && cl2.device === device) row[C.CLAIM - 1] = '';
   row[C.NAME - 1] = safeText_(name);
   if (!row[C.REGISTERED - 1]) row[C.REGISTERED - 1] = new Date();
+  var newSub = subscription ? String(subscription).slice(0, 2000) : '';
+  if (String(row[C.SUB - 1] || '') !== newSub || row[C.DEVICE - 1] !== device) row[C.PUSH_OK - 1] = '';
   row[C.DEVICE - 1] = device;
-  row[C.SUB - 1] = subscription ? String(subscription).slice(0, 2000) : '';
+  row[C.SUB - 1] = newSub;
+  if (carriedMobile && !row[C.MOBILE - 1]) row[C.MOBILE - 1] = carriedMobile;
   if (!row[C.STATUS - 1]) row[C.STATUS - 1] = STATUS.REGISTERED;
   writeRow_(reg, i);
   paintSeat_(null, row);
   return targets;
+}
+
+/* ======================= PUSH CONFIRMATION + SMS ======================= */
+/** The phone's service worker received a push → this phone is confirmed reachable. */
+function pushOk_(d) {
+  var seat = normSeat_(d.seat);
+  var device = String(d.deviceId || '');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var reg = getRegistry_();
+    var i = reg.index[seat];
+    if (i === undefined || reg.rows[i][C.DEVICE - 1] !== device) return { ok: false, code: 'NOT_YOUR_SEAT' };
+    if (!reg.rows[i][C.PUSH_OK - 1]) { reg.rows[i][C.PUSH_OK - 1] = new Date(); writeRow_(reg, i); }
+    return { ok: true };
+  } finally { lock.releaseLock(); }
+}
+
+function normMobile_(v) {
+  var d = String(v || '').replace(/[^0-9]/g, '');
+  if (/^639\d{9}$/.test(d)) d = '0' + d.slice(2);
+  if (/^9\d{9}$/.test(d)) d = '0' + d;
+  return /^09\d{9}$/.test(d) ? d : '';
+}
+
+/** Phone saved (or removed) a mobile number for SMS alerts. */
+function setMobile_(d) {
+  var seat = normSeat_(d.seat);
+  var device = String(d.deviceId || '');
+  var remove = d.mobile === '' || d.mobile === null;
+  var mobile = remove ? '' : normMobile_(d.mobile);
+  if (!remove && !mobile) return { ok: false, code: 'MOBILE_INVALID' };
+  var s = getSettings_();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  var changed = false;
+  try {
+    var reg = getRegistry_();
+    var i = reg.index[seat];
+    if (i === undefined || reg.rows[i][C.DEVICE - 1] !== device) return { ok: false, code: 'NOT_YOUR_SEAT' };
+    changed = String(reg.rows[i][C.MOBILE - 1] || '') !== mobile;
+    reg.rows[i][C.MOBILE - 1] = mobile;
+    writeRow_(reg, i);
+  } finally { lock.releaseLock(); }
+  var smsReady = s.smsEnabled && !!PropertiesService.getScriptProperties().getProperty('SEMAPHORE_KEY');
+  var confirm = { sent: [], failed: [], error: '' };
+  if (mobile && changed && smsReady && s.smsConfirm) {
+    confirm = sendSms_([{ seat: seat, number: mobile, text: 'Find Me: You will get a text here when it is your turn (Seat ' + seat + '). Please stay seated.' }], s);
+  }
+  return { ok: true, mobile: mobile, smsReady: smsReady, confirmSent: confirm.sent.length > 0 };
+}
+
+function smsText_(s, seat) {
+  var t = s.title + ' (Seat ' + seat + '). ' + s.message;
+  if (/^test/i.test(t)) t = 'Find Me: ' + t; // Semaphore drops messages that start with "TEST"
+  return t.slice(0, 300);
+}
+
+/** Sends texts via Semaphore. items: [{ seat, number, text }] */
+function sendSms_(items, s) {
+  var out = { sent: [], failed: [], error: '' };
+  s = s || getSettings_();
+  if (!s.smsEnabled) { out.error = 'SMS is turned off in Find Me Settings.'; return out; }
+  var key = PropertiesService.getScriptProperties().getProperty('SEMAPHORE_KEY');
+  if (!key) { out.error = 'SMS not set up — 📣 Find Me → 📱 Set up SMS.'; items.forEach(function (m) { out.failed.push(m.seat); }); return out; }
+  var url = 'https://api.semaphore.co/api/v4/' + (s.smsPriority ? 'priority' : 'messages');
+  var reqs = items.map(function (m) {
+    var payload = { apikey: key, number: m.number, message: m.text };
+    if (s.smsSender) payload.sendername = s.smsSender;
+    return { url: url, method: 'post', payload: payload, muteHttpExceptions: true };
+  });
+  var resps;
+  try { resps = UrlFetchApp.fetchAll(reqs); } catch (e) {
+    out.error = 'Could not reach Semaphore: ' + e.message;
+    items.forEach(function (m) { out.failed.push(m.seat); });
+    return out;
+  }
+  resps.forEach(function (r, k) {
+    var seat = items[k].seat, body = r.getContentText() || '', data = null;
+    try { data = JSON.parse(body); } catch (e) { /* not JSON */ }
+    var okRow = Array.isArray(data) && data.length && data[0].message_id && String(data[0].status).toLowerCase() !== 'failed';
+    if (r.getResponseCode() === 200 && okRow) out.sent.push(seat);
+    else {
+      out.failed.push(seat);
+      if (!out.error) out.error = 'Semaphore (' + r.getResponseCode() + '): ' + body.slice(0, 140);
+    }
+  });
+  return out;
+}
+
+function menuSetupSms() {
+  var ui = SpreadsheetApp.getUi();
+  var props = PropertiesService.getScriptProperties();
+  var has = !!props.getProperty('SEMAPHORE_KEY');
+  var res = ui.prompt('📱 Set up SMS (Semaphore)',
+    '1) Create an account at semaphore.co and load credits.\n2) Copy your API key from the Semaphore dashboard and paste it here.' +
+    (has ? '\n\nA key is already saved. Paste a new one to replace it, or type REMOVE to delete it.' : ''), ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  var v = res.getResponseText().trim();
+  if (!v) return;
+  if (v.toUpperCase() === 'REMOVE') { props.deleteProperty('SEMAPHORE_KEY'); ui.alert('SMS key removed. SMS alerts are off.'); return; }
+  props.setProperty('SEMAPHORE_KEY', v);
+  ui.alert('📱 SMS ready', 'Key saved (kept private — not stored in the sheet).\n\nNext: 📣 Find Me → 📱 Send a test SMS to your own number.\n' +
+    'Sender name and other SMS options are in the "' + SET_SHEET + '" tab.', ui.ButtonSet.OK);
+}
+
+function menuTestSms() {
+  var ui = SpreadsheetApp.getUi();
+  var res = ui.prompt('📱 Send a test SMS', 'Your mobile number (e.g. 09171234567):', ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  var num = normMobile_(res.getResponseText());
+  if (!num) { ui.alert('That doesn\'t look like a PH mobile number (09XXXXXXXXX).'); return; }
+  _settings = null;
+  var s = getSettings_();
+  var out = sendSms_([{ seat: 'A1', number: num, text: 'Find Me sample alert: ' + smsText_(s, 'A1') }], s);
+  ui.alert(out.sent.length ? '✅ Sent to ' + num + '. It should arrive within a few seconds.' : '❌ Not sent. ' + (out.error || ''));
 }
 
 /** "This is my seat — get staff help": flags a taken seat red so staff can check. */

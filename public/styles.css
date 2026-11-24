@@ -227,6 +227,14 @@ input[type="text"]:focus { outline: none; border-color: var(--lime); box-shadow:
 .copy-row .mini { height: 46px; padding: 0 18px; }
 .steps .kbd { display: inline-block; min-width: 26px; padding: 0 6px; border-radius: 7px; background: rgba(255,255,255,.14); font-weight: 800; text-align: center; }
 
+/* ---------- SMS fallback ---------- */
+.sms-card { border-color: rgba(255, 176, 32, .45); background: linear-gradient(160deg, rgba(255,176,32,.10), rgba(255,255,255,.03)); }
+.sms-card.saved { border-color: rgba(198, 244, 50, .4); background: linear-gradient(160deg, rgba(198,244,50,.08), rgba(255,255,255,.03)); }
+.sms-card form { margin-top: 12px; }
+.sms-card input[type="tel"] { font-size: 18px; letter-spacing: .03em; }
+.sms-ok { margin: 6px 0 2px; font-size: 17px; color: var(--lime); }
+.sms-link { display: block; margin: -4px 0 12px; }
+
 /* ---------- Staff notice overlay (calm, not flashing) ---------- */
 .notice { position: fixed; inset: 0; z-index: 110; display: grid; place-items: center; text-align: center;
   padding: calc(24px + var(--safe-t)) 24px calc(24px + var(--safe-b)); color: #fff;

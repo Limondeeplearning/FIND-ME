@@ -6,6 +6,8 @@ Participants scan a QR code, register their **name + seat**. When you select the
 
 They tap **On my way** and the seat turns green on your sheet. Each participant's **name appears in the cell above their seat** on the seat map.
 
+**Reachability check:** right after registering, each phone gets an automatic *"✅ You're all set"* notification. If it arrives, the phone is **confirmed**. If it doesn't (phones that block notifications, such as many Xiaomi/Oppo/vivo, or iPhone in a Safari tab), the page asks for a **mobile number** and that person gets an **SMS** when called (via Semaphore). The registry's **Alert via** column shows how each seat will be reached.
+
 **Wrong-seat safety net:** before registering, participants see a small hall map with their seat highlighted and must confirm it. If a seat is already taken, they can tap **This is my seat — get staff help**, which turns the seat **red** on your map. Staff then unregister the wrong person. That phone gets a **"Please register again"** notification, and the person who asked gets the seat automatically.
 
 ```
@@ -65,7 +67,14 @@ In **Vercel → Project → Settings → Environment Variables**, add:
 2. It shows a **SHARED_SECRET**. Paste it into Vercel as `SHARED_SECRET`, then **Redeploy** in Vercel.
 3. Sheet: **📣 Find Me → 🧪 Test connection**. All four lines should be ✅.
 
-### 6. QR code
+### 6. SMS fallback (Semaphore), optional and paid
+Without SMS, phones that can't get notifications are told: *"Please keep this page open, or come back here when it's awarding time."* They show as **Page only** in the registry, so ushers know whom to check. If you set up SMS later, those phones automatically start offering a mobile-number field instead.
+1. Create an account at **semaphore.co** and load credits. Texts use the **priority** route (skips the queue) at 2 credits each, about ₱1.12 per text; you can switch this off in Settings.
+2. Sheet: **📣 Find Me → 📱 Set up SMS (Semaphore)** and paste your **API key**. It's stored privately, not in the sheet.
+3. **📣 Find Me → 📱 Send a test SMS** to your own number. If Semaphore reports a **sender name** error, register a sender name in your Semaphore dashboard and type it into **SMS sender name** in **Find Me Settings**.
+4. Options in **Find Me Settings**: SMS on/off, sender name, text again on re-alerts, confirmation text when a number is saved, priority route.
+
+### 7. QR code
 Make a QR code of your Vercel address and print it on seat cards, the program, or the screen. In Chrome on a computer: open the site → **Share icon** in the address bar → **Create QR code** → **Download**. QR Code Monkey or Canva also work. Choose a **static** QR code, because some free "dynamic" ones stop working when their trial ends.
 
 Tell participants to **scan with their Camera app**. If the link is opened inside Messenger, Facebook, Instagram, Viber and similar apps, Find Me shows an **Open in your browser** screen. On Android, a button switches to Chrome; on iPhone, it shows the steps. Registration is blocked there because those in-app browsers can't receive background alerts. On Xiaomi/Redmi/Poco, Oppo/Realme, vivo, Huawei, Infinix/Tecno and UC browsers, which phone QR scanners often open, it recommends Chrome with the same button and offers a **Continue anyway** link.
@@ -82,14 +91,18 @@ Tell participants to **scan with their Camera app**. If the link is opened insid
 | Change the message | Edit **Alert message** in **Find Me Settings**. It applies to the next alert. |
 | See who hasn't responded | **📊 Status summary**, or look for orange seats |
 | Stop new registrations | Untick **Registration open** in Settings |
+| Award received | Tick **DONE** in the registry, or select seats → **✓ Mark selected seats DONE**. The seat turns **grey** and can't be alerted. |
+| Same person has another award later | Untick **DONE** (or **↺ Undo DONE**), then alert again |
+| Unregister one seat | Tick **UNREGISTER** in that seat's row, or select the seat → **✖ Unregister selected seats** |
+| Check who is reachable | **Alert via** column: **Push ✓** (confirmed), **SMS**, **Push (unconfirmed)**, or **Page only** (highlighted, send an usher if called) |
 | Fix a wrong registration | Select the seat → **✖ Unregister selected seats**. The phone gets a *"Please register again"* notification. |
 | Red seat (someone says "this is my seat") | Check with an usher, then either **✖ Unregister** the wrong person (the claimant gets the seat automatically) or **⚠ Dismiss claim** if the claimant was wrong (their phone is asked to re-check their seat) |
 
-**Seat map colours:** blue border = registered · **red** = needs staff (seat claimed by two people, or the same name at two seats; see the **⚠ Issue** column) · **orange** = alerted, waiting for reply (send an usher if it stays orange) · **green** = "On my way". Original seat colours come back when an alert is cancelled.
+**Seat map colours:** blue border = registered · **grey** = DONE · **red** = needs staff (seat claimed by two people, or the same name at two seats; see the **⚠ Issue** column) · **orange** = alerted, waiting for reply (send an usher if it stays orange) · **green** = "On my way". Original seat colours come back when an alert is cancelled.
 
 **Re-alerts:** seats still orange get re-sent about every minute, up to 3 times. Change this in Settings.
 
-The toast after each alert lists seats that **aren't registered** (send an usher) and seats with **no lock-screen alerts** (they only see it while the page is open).
+The pop-up after each alert shows **Push sent to X**, **SMS sent to X**, seats that **aren't registered** (send an usher), seats that are **only reachable if their page is open** (send an usher if they don't respond), and seats skipped because they're **DONE**.
 
 ## After the event (Data Privacy)
 **📣 Find Me → 🗑 Clear ALL registrations.** This deletes names and phone links and restores the map colours. Then set the sheet's sharing back to staff only.
@@ -97,11 +110,14 @@ The toast after each alert lists seats that **aren't registered** (send an usher
 ---
 
 ## Updating the script later
-After pasting a new `Code.gs`: **Deploy → Manage deployments → ✏ Edit → Version: New version → Deploy**, then run **📣 Find Me → 🔧 Set up / rebuild registry** once. This adds any new columns and keeps every registration.
+After pasting a new `Code.gs`: **Deploy → Manage deployments → ✏ Edit → Version: New version → Deploy**, then run **📣 Find Me → 🔧 Set up / rebuild registry** once. This moves the registry to the new column layout (matched by column name), adds new settings rows, and keeps every registration.
 
 ## Rehearsal checklist
 - [ ] Test on 1 Android + 1 iPhone (added to Home Screen): register → alert → locked-phone alert → On my way → green on the map
 - [ ] Test the safety net: two phones register the same seat → **This is my seat** → seat turns red → unregister the wrong one → first phone gets *Please register again*, second gets *You're registered*
+- [ ] Test a phone that blocks notifications (e.g. a Redmi): after ~25 s it should ask for a mobile number; alert it → the SMS arrives
+- [ ] Tick DONE on a seat → it turns grey and can't be alerted; untick → it can be alerted again
+- [ ] Before doors open: **📊 Status summary** → check how many seats are "Not confirmed"
 - [ ] Test on venue Wi-Fi **and** mobile data
 - [ ] Usher announcement: *"Scan the QR, register your seat, tap Allow. iPhone: Share → Add to Home Screen first. Turn off Silent / Do Not Disturb."*
 - [ ] Assign one staff member to run the sheet on a laptop
@@ -110,7 +126,9 @@ After pasting a new `Code.gs`: **Deploy → Manage deployments → ✏ Edit → 
 ```
 api/            Vercel serverless functions
   config.js     push key + event name for the phone
-  register.js   phone → sheet: name + seat (+ push subscription); also "this is my seat" claims
+  register.js   phone → sheet: name + seat (+ push subscription) and the automatic "You're all set" push;
+                also "this is my seat" claims, mobile numbers and push receipts
+  _push.js      shared push-sending helper
   ack.js        phone → sheet: "On my way"
   alerts.js     phones poll the current calls + staff changes (cached 2 s at Vercel's edge)
   layout.js     seat positions for the "check your seat" hall map

@@ -1,8 +1,8 @@
 // POST /api/push — called by the Google Sheet (Apps Script) to send push notifications.
-// Body: { secret, title, message, targets: [{ type, seat, alertId, subscription, title?, message?, serverTime }] }
-// type: alert (your turn) | unregistered (register again) | granted (seat is yours) | dismissed (check your seat)
-import webpush from 'web-push';
+// Body: { secret, title, message, targets: [{ type, seat, alertId, device, subscription, title?, message?, serverTime }] }
+// type: alert (your turn) | unregistered (register again) | granted (seat is yours) | dismissed (check your seat) | welcome
 import { env, send, readJson, safeEqual, methodGuard } from './_lib.js';
+import { initPush, sendPush } from './_push.js';
 
 export const config = { maxDuration: 30 };
 
@@ -16,30 +16,24 @@ export default async function handler(req, res) {
     return send(res, 400, { ok: false, error: 'Bad JSON' });
   }
   if (!safeEqual(body.secret, env('SHARED_SECRET'))) return send(res, 401, { ok: false, error: 'Unauthorized' });
-
-  const publicKey = env('VAPID_PUBLIC_KEY');
-  const privateKey = env('VAPID_PRIVATE_KEY');
-  if (!publicKey || !privateKey) return send(res, 500, { ok: false, error: 'VAPID keys are not set in Vercel' });
-  webpush.setVapidDetails(env('VAPID_SUBJECT', 'mailto:admin@example.com'), publicKey, privateKey);
+  if (!initPush()) return send(res, 500, { ok: false, error: 'VAPID keys are not set in Vercel' });
 
   const targets = Array.isArray(body.targets) ? body.targets.slice(0, 500) : [];
-  const title = String(body.title || "It's your turn").slice(0, 80);
-  const message = String(body.message || '').slice(0, 300);
+  const title = String(body.title || "It's your turn");
+  const message = String(body.message || '');
 
   const results = await Promise.allSettled(
-    targets.map(async (t) => {
-      const sub = typeof t.subscription === 'string' ? JSON.parse(t.subscription) : t.subscription;
-      const payload = JSON.stringify({
-        type: ['alert', 'unregistered', 'granted', 'dismissed'].includes(t.type) ? t.type : 'alert',
+    targets.map((t) =>
+      sendPush(t.subscription, {
+        type: t.type,
         seat: t.seat,
         alertId: t.alertId,
-        title: String(t.title || title).slice(0, 80),
-        message: String(t.message || message).slice(0, 300),
-        serverTime: Number(t.serverTime) || Date.now(),
-      });
-      await webpush.sendNotification(sub, payload, { TTL: 600, urgency: 'high', topic: 'findme' });
-      return t.seat;
-    })
+        device: t.device,
+        title: t.title || title,
+        message: t.message || message,
+        serverTime: t.serverTime,
+      })
+    )
   );
 
   const sent = [];
