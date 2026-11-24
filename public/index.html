@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Find Me · Seat Alerts</title>
+  <meta name="description" content="Seat alerts for the awarding ceremony. Stay seated — your phone will tell you when it's your turn.">
+  <meta name="theme-color" content="#09090F">
+  <meta name="color-scheme" content="dark">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Find Me">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="bg" aria-hidden="true">
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="ring"></div>
+  </div>
+
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-text">
+        <strong id="event-name">REBUILD Conference</strong>
+        <small id="event-sub">Day 2 · Awarding Proper</small>
+      </span>
+    </div>
+    <span class="pill" id="conn" role="status" aria-live="polite"><span class="pill-dot"></span><span id="conn-text">Connecting</span></span>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <!-- Loading -->
+    <section id="screen-loading" class="screen" aria-busy="true">
+      <div class="loader" aria-hidden="true"></div>
+      <p class="muted">Loading Find Me…</p>
+    </section>
+
+    <!-- Register -->
+    <section id="screen-register" class="screen" hidden aria-labelledby="reg-title">
+      <p class="eyebrow">Find Me · Seat alerts</p>
+      <h1 id="reg-title">Stay seated.<br><span class="grad">We'll call you.</span></h1>
+      <p class="lede">Register your seat. When it's your turn, this phone will vibrate and flash so you know to proceed.</p>
+
+      <div id="ios-guide" class="card card-ios" hidden>
+        <p class="card-kicker">iPhone users — do this first</p>
+        <h2>Add Find Me to your Home Screen</h2>
+        <p class="muted">iPhones only allow alerts on a locked screen from Home Screen apps.</p>
+        <ol class="steps">
+          <li><span class="n">1</span><span>Tap the <b>Share</b> button
+            <svg class="ico" viewBox="0 0 24 24" aria-label="Share icon" role="img"><path d="M12 3v12M12 3l-4 4M12 3l4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            at the bottom of Safari.</span></li>
+          <li><span class="n">2</span><span>Scroll and tap <b>Add to Home Screen</b>, then <b>Add</b>.</span></li>
+          <li><span class="n">3</span><span>Open <b>Find Me</b> from your Home Screen and register there.</span></li>
+        </ol>
+        <button type="button" class="link" id="ios-skip">Skip — I'll keep this page open on my screen</button>
+      </div>
+
+      <form id="reg-form" class="card" novalidate>
+        <div class="field">
+          <label for="name">Full name</label>
+          <input id="name" name="name" type="text" autocomplete="name" required minlength="2" maxlength="80" placeholder="Juan dela Cruz">
+        </div>
+        <div class="field">
+          <label for="seat">Seat number</label>
+          <input id="seat" name="seat" type="text" required maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. A12" aria-describedby="seat-hint">
+          <p class="hint" id="seat-hint">Row letter + seat number, as shown on your seat.</p>
+        </div>
+        <p class="error" id="reg-error" role="alert" hidden></p>
+        <button class="btn btn-primary" id="reg-btn" type="submit">
+          <span class="btn-label">Register &amp; turn on alerts</span>
+          <span class="btn-arrow" aria-hidden="true">→</span>
+        </button>
+        <p class="fineprint">When asked, tap <b>Allow</b> for notifications. Your name and seat are used only to call you during this ceremony.</p>
+      </form>
+
+      <!-- Step 2: check the seat on a hall map -->
+      <div id="confirm" class="card confirm" hidden role="region" aria-labelledby="c-title">
+        <p class="card-kicker">Check your seat</p>
+        <div class="hall" id="hall" aria-hidden="true"></div>
+        <h2 class="confirm-seat" id="c-title">Seat <span id="c-seat"></span></h2>
+        <p class="confirm-where" id="c-where"></p>
+        <p class="muted">Is this where you're sitting? Compare with the label on your seat.</p>
+        <p class="error" id="c-error" role="alert" hidden></p>
+        <button class="btn btn-primary" id="confirm-yes" type="button">
+          <span class="btn-label">Yes, that's my seat</span>
+          <span class="btn-arrow" aria-hidden="true">→</span>
+        </button>
+        <button class="btn btn-ghost wide" id="confirm-edit" type="button">Edit seat number</button>
+      </div>
+
+      <!-- Seat already taken -->
+      <div id="taken" class="card taken" hidden role="region" aria-labelledby="t-title">
+        <p class="card-kicker warn">Seat already taken</p>
+        <h2 id="t-title">Seat <span id="t-seat"></span> is already registered to another participant.</h2>
+        <p class="muted">Please check the label on your seat. If you're sure this is your seat, our staff will sort it out.</p>
+        <p class="error" id="t-error" role="alert" hidden></p>
+        <button class="btn btn-primary" id="taken-edit" type="button">
+          <span class="btn-label">Re-enter seat number</span>
+          <span class="btn-arrow" aria-hidden="true">←</span>
+        </button>
+        <button class="btn btn-ghost wide" id="taken-claim" type="button">This is my seat — get staff help</button>
+      </div>
+    </section>
+
+    <!-- Waiting -->
+    <section id="screen-waiting" class="screen" hidden aria-labelledby="w-title">
+      <p class="eyebrow" id="w-title">You're registered</p>
+      <div class="seat-hero">
+        <span class="seat-label">Seat</span>
+        <span class="seat-num" id="w-seat">—</span>
+      </div>
+      <p class="who" id="w-name"></p>
+      <p class="lede">Relax and enjoy the ceremony. When it's your turn, this phone will alert you.</p>
+
+      <button type="button" class="arm" id="arm-btn" hidden>
+        <span class="arm-pulse" aria-hidden="true"></span>
+        <span><b>Tap to arm sound &amp; vibration</b><small>Needed once after opening the page</small></span>
+      </button>
+
+      <ul class="checks card" aria-label="Alert readiness">
+        <li id="chk-notif" class="chk"><span class="dot" aria-hidden="true"></span><span><b>Lock-screen alerts</b><small>Checking…</small></span><button type="button" class="mini" id="notif-btn" hidden>Turn on</button></li>
+        <li id="chk-vibe" class="chk"><span class="dot" aria-hidden="true"></span><span><b>Vibration</b><small>Checking…</small></span></li>
+        <li id="chk-flash" class="chk ok"><span class="dot" aria-hidden="true"></span><span><b>Screen flash</b><small>Ready</small></span></li>
+        <li id="chk-awake" class="chk"><span class="dot" aria-hidden="true"></span><span><b>Keep screen on</b><small>Stops the screen from sleeping</small></span>
+          <label class="switch"><input type="checkbox" id="awake-toggle"><span class="slider" aria-hidden="true"></span><span class="sr-only">Keep screen on</span></label>
+        </li>
+      </ul>
+
+      <div class="card note">
+        <p class="card-kicker">Please</p>
+        <ul class="dos">
+          <li>Turn <b>off</b> Do Not Disturb / Focus and Silent mode.</li>
+          <li>Keep <b>vibration on</b> and your volume up.</li>
+          <li><b>Do not quit</b> your browser or the Find Me app.</li>
+        </ul>
+      </div>
+
+      <div class="row">
+        <button class="btn btn-ghost" id="test-btn" type="button">Test my alert</button>
+        <button class="link" id="change-btn" type="button">Not your seat? Change</button>
+      </div>
+    </section>
+
+    <!-- Waiting for staff (seat claimed) -->
+    <section id="screen-pending" class="screen" hidden aria-labelledby="p-title">
+      <p class="eyebrow eyebrow-warn">Staff notified</p>
+      <div class="seat-hero">
+        <span class="seat-label">Seat</span>
+        <span class="seat-num seat-num-warn" id="p-seat">—</span>
+      </div>
+      <h1 class="h-mid" id="p-title">Please stay seated.</h1>
+      <p class="lede">A staff member will come to check your seat. This screen updates by itself — you don't need to do anything.</p>
+      <div class="card waiting-staff">
+        <span class="loader loader-sm" aria-hidden="true"></span>
+        <span><b>Waiting for staff…</b><small>Keep this page open. You'll get a notification when your seat is confirmed.</small></span>
+      </div>
+      <button class="link" id="unclaim-btn" type="button">I entered the wrong seat — go back</button>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>Find Me · Seat alerts</span>
+  </footer>
+
+  <!-- Full-screen alert -->
+  <div id="alert" class="alert" role="alertdialog" aria-modal="true" aria-labelledby="alert-title" aria-describedby="alert-msg" hidden>
+    <div class="alert-inner">
+      <p class="alert-eyebrow"><span id="a-tag">Now calling</span> · Seat <span id="a-seat"></span></p>
+      <h2 id="alert-title">Please proceed now</h2>
+      <p id="alert-msg" class="alert-msg"></p>
+      <button class="btn btn-alert" id="ack-btn" type="button">On my way</button>
+      <div class="alert-after" id="alert-after" hidden>
+        <p class="after-big">Thank you!</p>
+        <p>A staff member will assist you.</p>
+        <button class="btn btn-ghost-dark" id="close-btn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Staff notice (register again / seat is yours) -->
+  <div id="notice" class="notice" role="alertdialog" aria-modal="true" aria-labelledby="n-title" aria-describedby="n-msg" hidden>
+    <div class="alert-inner">
+      <p class="alert-eyebrow" id="n-tag">From the staff</p>
+      <h2 id="n-title"></h2>
+      <p id="n-msg" class="alert-msg"></p>
+      <button class="btn btn-alert" id="n-btn" type="button">OK</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

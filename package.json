@@ -1,0 +1,16 @@
+{
+  "name": "find-me",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Find Me — seat alerts for awarding ceremonies. Google Sheet trigger, web push + screen flash on participants' phones.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "vapid": "node scripts/generate-vapid-keys.mjs"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}
