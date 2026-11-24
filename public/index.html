@@ -44,6 +44,33 @@
       <p class="muted">Loading Find Me…</p>
     </section>
 
+    <!-- Opened inside Messenger / Facebook / Instagram etc. -->
+    <section id="screen-inapp" class="screen" hidden aria-labelledby="ia-title">
+      <p class="eyebrow eyebrow-warn">One more step</p>
+      <h1 id="ia-title">Open in your<br><span class="grad">browser.</span></h1>
+      <p class="lede" id="ia-lede">You opened this inside <b id="ia-app">another app</b>. Alerts can't reach you here, so please open Find Me in <b id="ia-browser">your browser</b>.</p>
+
+      <a class="btn btn-primary ia-open" id="ia-open" href="#" hidden>
+        <span class="btn-label">Open in Chrome</span>
+        <span class="btn-arrow" aria-hidden="true">↗</span>
+      </a>
+
+      <div class="card">
+        <p class="card-kicker" id="ia-kicker">How to open it</p>
+        <ol class="steps" id="ia-steps"></ol>
+      </div>
+
+      <div class="card">
+        <label for="ia-url">Or copy the link and paste it into your browser</label>
+        <div class="copy-row">
+          <input id="ia-url" type="text" readonly>
+          <button type="button" class="mini" id="ia-copy">Copy</button>
+        </div>
+      </div>
+
+      <button class="link" id="ia-continue" type="button" hidden>Continue here anyway (you may miss alerts)</button>
+    </section>
+
     <!-- Register -->
     <section id="screen-register" class="screen" hidden aria-labelledby="reg-title">
       <p class="eyebrow">Find Me · Seat alerts</p>

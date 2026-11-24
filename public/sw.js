@@ -4,7 +4,7 @@
    - Keeps a small offline copy of the app so it still opens on weak venue Wi-Fi */
 'use strict';
 
-const CACHE = 'findme-v2';
+const CACHE = 'findme-v4';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/badge-96.png'];
 const DEFAULT_MSG = 'Please proceed to the holding area on the right. Please find the staff to assist you.';
 

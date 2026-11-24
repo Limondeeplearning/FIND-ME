@@ -4,7 +4,7 @@ Participants scan a QR code, register their **name + seat**. When you select the
 
 > *Please proceed to the holding area on the right. Please find the staff to assist you.*
 
-They tap **On my way** and the seat turns green on your sheet.
+They tap **On my way** and the seat turns green on your sheet. Each participant's **name appears in the cell above their seat** on the seat map.
 
 **Wrong-seat safety net:** before registering, participants see a small hall map with their seat highlighted and must confirm it. If a seat is already taken, they can tap **This is my seat — get staff help**, which turns the seat **red** on your map. Staff then unregister the wrong person. That phone gets a **"Please register again"** notification, and the person who asked gets the seat automatically.
 
@@ -66,7 +66,9 @@ In **Vercel → Project → Settings → Environment Variables**, add:
 3. Sheet: **📣 Find Me → 🧪 Test connection**. All four lines should be ✅.
 
 ### 6. QR code
-Make a QR code of your Vercel address and print it on seat cards, the program, or the screen.
+Make a QR code of your Vercel address and print it on seat cards, the program, or the screen. In Chrome on a computer: open the site → **Share icon** in the address bar → **Create QR code** → **Download**. QR Code Monkey or Canva also work. Choose a **static** QR code, because some free "dynamic" ones stop working when their trial ends.
+
+Tell participants to **scan with their Camera app**. If the link is opened inside Messenger, Facebook, Instagram, Viber and similar apps, Find Me shows an **Open in your browser** screen. On Android, a button switches to Chrome; on iPhone, it shows the steps. Registration is blocked there because those in-app browsers can't receive background alerts. On Xiaomi/Redmi/Poco, Oppo/Realme, vivo, Huawei, Infinix/Tecno and UC browsers, which phone QR scanners often open, it recommends Chrome with the same button and offers a **Continue anyway** link.
 
 ---
 
@@ -74,7 +76,7 @@ Make a QR code of your Vercel address and print it on seat cards, the program, o
 
 | Do this | How |
 |---|---|
-| Call one or more people | Select their seat cells on **ADMIN Seat Plan and Registration** (Ctrl/Cmd-click for several) → **📣 Find Me → 📣 Alert selected seats** |
+| Call one or more people | Select their seat cells **or their name cells** on **ADMIN Seat Plan and Registration** (Ctrl/Cmd-click for several) → **📣 Find Me → 📣 Alert selected seats** |
 | …or from the list | Tick **ALERT** in **Find Me Registry** |
 | Cancel a call | Select seats → **↺ Cancel alert on selected seats** (or untick ALERT) |
 | Change the message | Edit **Alert message** in **Find Me Settings**. It applies to the next alert. |

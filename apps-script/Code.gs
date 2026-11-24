@@ -16,6 +16,9 @@
  *    turns RED with a note. Staff unregister the wrong person → that phone is
  *    told to register again, and the person who asked gets the seat automatically.
  *  • Same name registered at two seats → both flagged red.
+ *  • Each participant's name is written in the cell directly above their seat
+ *    on the seat map (e.g. row 9 for row-A seats in row 10). Selecting the
+ *    name cell works the same as selecting the seat.
  */
 
 /* ======================= CONSTANTS ======================= */
@@ -28,11 +31,11 @@ var SEAT_RE = /^[A-Z]{1,2}\d{1,3}$/;
 var C = {
   SEAT: 1, NAME: 2, REGISTERED: 3, ALERT: 4, STATUS: 5, ALERTED_AT: 6, ACK_AT: 7, COUNT: 8,
   MAP_CELL: 9, DEVICE: 10, SUB: 11, ALERT_ID: 12, LAST_SENT: 13, ORIG_BG: 14,
-  ISSUE: 15, CLAIM: 16
+  ISSUE: 15, CLAIM: 16, NAME_CELL: 17
 };
-var NCOLS = 16;
+var NCOLS = 17;
 var HEADERS = ['Seat', 'Name', 'Registered', 'ALERT', 'Status', 'First alerted', 'On my way at', 'Alerts sent',
-  'Map cell', 'Device', 'Push subscription', 'Alert ID', 'Last sent', 'Original colour', '⚠ Issue', 'Claim (hidden)'];
+  'Map cell', 'Device', 'Push subscription', 'Alert ID', 'Last sent', 'Original colour', '⚠ Issue', 'Claim (hidden)', 'Name cell (hidden)'];
 
 var STATUS = { NONE: '', REGISTERED: 'Registered', ALERTED: 'Alerted', ON_THE_WAY: 'On the way' };
 var COLORS = {
@@ -90,6 +93,19 @@ function setup() {
     return;
   }
 
+  // 0) Existing registrations (kept) + the name cells we wrote before (not seat labels).
+  var sh = ss.getSheetByName(REG_SHEET);
+  var old = {}, oldNameCells = {};
+  if (sh) {
+    var last = sh.getLastRow();
+    if (last > 1) {
+      sh.getRange(2, 1, last - 1, NCOLS).getValues().forEach(function (row) {
+        if (row[0]) old[row[0]] = row;
+        if (row[C.NAME_CELL - 1]) oldNameCells[String(row[C.NAME_CELL - 1])] = true;
+      });
+    }
+  }
+
   // 1) Scan the seat map for seat labels (e.g. A1 … L20).
   var range = map.getDataRange();
   var values = range.getDisplayValues();
@@ -99,14 +115,26 @@ function setup() {
     for (var c = 0; c < values[r].length; c++) {
       var raw = String(values[r][c]).trim();
       if (!raw || raw.length > 6) continue;
+      if (oldNameCells[a1_(r + 1, c + 1)]) continue;
       var seat = normSeat_(raw);
       if (!SEAT_RE.test(seat)) continue;
       var a1 = map.getRange(r + 1, c + 1).getA1Notation();
       if (found[seat]) { dupes.push(seat + ' (' + found[seat] + ' & ' + a1 + ')'); continue; }
       found[seat] = a1;
-      seats.push({ seat: seat, cell: a1, bg: bgs[r][c] });
+      seats.push({ seat: seat, cell: a1, bg: bgs[r][c], r: r, c: c });
     }
   }
+  // Name cell = the cell directly above each seat, if it's free (or holds a name we wrote).
+  var seatCells = {};
+  seats.forEach(function (s) { seatCells[s.cell] = true; });
+  seats.forEach(function (s) {
+    s.nameCell = '';
+    if (s.r < 1) return;
+    var above = a1_(s.r, s.c + 1);
+    var v = String(values[s.r - 1][s.c] || '').trim();
+    if (seatCells[above]) return;
+    if (!v || oldNameCells[above]) s.nameCell = above;
+  });
   if (!seats.length) { ui.alert('Find Me', 'No seat labels (like A1, B12) were found on "' + settings.mapTab + '".', ui.ButtonSet.OK); return; }
   seats.sort(function (a, b) {
     var ra = a.seat.replace(/\d+/, ''), rb = b.seat.replace(/\d+/, '');
@@ -115,20 +143,17 @@ function setup() {
   });
 
   // 2) Build / merge the registry (keeps existing registrations).
-  var sh = ss.getSheetByName(REG_SHEET);
-  var old = {};
-  if (sh) {
-    var last = sh.getLastRow();
-    if (last > 1) {
-      sh.getRange(2, 1, last - 1, NCOLS).getValues().forEach(function (row) { if (row[0]) old[row[0]] = row; });
-    }
-  } else {
-    sh = ss.insertSheet(REG_SHEET);
-  }
+  if (!sh) sh = ss.insertSheet(REG_SHEET);
+  // Clear name cells that are no longer used.
+  Object.keys(oldNameCells).forEach(function (cell) {
+    var stillUsed = seats.some(function (s) { return s.nameCell === cell; });
+    if (!stillUsed) map.getRange(cell).setValue('');
+  });
   var rows = seats.map(function (s) {
     var row = old[s.seat] ? old[s.seat].slice() : blankRow_();
     row[C.SEAT - 1] = s.seat;
     row[C.MAP_CELL - 1] = s.cell;
+    row[C.NAME_CELL - 1] = s.nameCell;
     row[C.ALERT - 1] = row[C.ALERT - 1] === true;
     if (!row[C.ORIG_BG - 1]) row[C.ORIG_BG - 1] = s.bg || '#ffffff';
     return row;
@@ -148,7 +173,13 @@ function setup() {
   sh.setColumnWidth(C.STATUS, 110);
   sh.setColumnWidth(C.ISSUE, 360);
   sh.hideColumns(C.MAP_CELL, C.ORIG_BG - C.MAP_CELL + 1);
-  sh.hideColumns(C.CLAIM, 1);
+  sh.hideColumns(C.CLAIM, NCOLS - C.CLAIM + 1);
+
+  // Name cells on the seat map: small, wrapped text so long names fit.
+  var nameCells = seats.filter(function (s) { return s.nameCell; }).map(function (s) { return s.nameCell; });
+  if (nameCells.length) {
+    map.getRangeList(nameCells).setFontSize(8).setWrap(true).setVerticalAlignment('bottom').setHorizontalAlignment('center');
+  }
 
   // Status colours in the registry
   var statusRange = sh.getRange(2, C.STATUS, rows.length, 1);
@@ -170,6 +201,9 @@ function setup() {
   CacheService.getScriptCache().remove('layout');
 
   var msg = 'Registry ready: ' + rows.length + ' seats found on "' + settings.mapTab + '".';
+  var noName = seats.filter(function (s) { return !s.nameCell; }).map(function (s) { return s.seat; });
+  msg += '\nNames will show above ' + (seats.length - noName.length) + ' seats' +
+    (noName.length ? ' (no free cell above: ' + noName.slice(0, 12).join(', ') + (noName.length > 12 ? '…' : '') + ')' : '') + '.';
   if (dupes.length) msg += '\n\n⚠ Duplicate seat labels (fix these on the map, then run setup again):\n' + dupes.join('\n');
   if (!PropertiesService.getScriptProperties().getProperty('VERCEL_URL')) msg += '\n\nNext: 📣 Find Me → 🔗 2. Connect to Vercel.';
   ui.alert('Find Me', msg, ui.ButtonSet.OK);
@@ -239,6 +273,11 @@ function mapSheet_() {
   return _map;
 }
 
+function a1_(row, col) {
+  var s = '';
+  while (col > 0) { var m = (col - 1) % 26; s = String.fromCharCode(65 + m) + s; col = Math.floor((col - 1) / 26); }
+  return s + row;
+}
 function blankRow_() { var r = []; for (var k = 0; k < NCOLS; k++) r.push(''); return r; }
 function normSeat_(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 function normName_(v) { return String(v || '').replace(/^'/, '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -252,6 +291,12 @@ function paintSeat_(map, row) {
   map = map || mapSheet_();
   var cell = row[C.MAP_CELL - 1];
   if (!map || !cell) return;
+  var nameCell = row[C.NAME_CELL - 1];
+  if (nameCell) {
+    var nm = String(row[C.NAME - 1] || '');
+    var nrg = map.getRange(String(nameCell));
+    if (String(nrg.getDisplayValue()) !== nm) nrg.setValue(nm ? safeText_(nm) : '');
+  }
   var rg = map.getRange(cell);
   var status = row[C.STATUS - 1];
   var orig = row[C.ORIG_BG - 1] || null;
@@ -552,8 +597,11 @@ function selectedSeats_() {
         var s = normSeat_(r[0]); if (SEAT_RE.test(s)) seats[s] = true;
       });
     } else {
-      rg.getDisplayValues().forEach(function (r) {
-        r.forEach(function (v) {
+      var r0 = rg.getRow(), c0 = rg.getColumn();
+      rg.getDisplayValues().forEach(function (r, i) {
+        r.forEach(function (v, j) {
+          var byName = nameCellMap()[a1_(r0 + i, c0 + j)];
+          if (byName) { seats[byName] = true; return; }
           var raw = String(v).trim();
           if (!raw || raw.length > 6) return;
           var s = normSeat_(raw); if (SEAT_RE.test(s)) seats[s] = true;
@@ -562,6 +610,15 @@ function selectedSeats_() {
     }
   });
   return Object.keys(seats);
+
+  function nameCellMap() {
+    if (nameCellMap.cache) return nameCellMap.cache;
+    var m = {};
+    try {
+      getRegistry_().rows.forEach(function (row) { if (row[C.NAME_CELL - 1]) m[String(row[C.NAME_CELL - 1])] = String(row[0]); });
+    } catch (e) { /* not set up yet */ }
+    return (nameCellMap.cache = m);
+  }
 }
 
 /* ======================= MENU ACTIONS ======================= */
@@ -744,6 +801,7 @@ function alertsPayload_() {
   var cache = CacheService.getScriptCache();
   var hit = cache.get('alerts');
   if (hit) return JSON.parse(hit);
+  var startedAt = Date.now(); // stamped BEFORE reading, so a read that races a change is never newer than it
   var s = getSettings_();
   var reg = getRegistry_();
   var alerts = [];
@@ -759,9 +817,9 @@ function alertsPayload_() {
   });
   var payload = {
     ok: true, title: s.title, message: s.message, registrationOpen: s.registrationOpen,
-    alerts: alerts, devices: devices, claims: claims, generatedAt: Date.now()
+    alerts: alerts, devices: devices, claims: claims, generatedAt: startedAt
   };
-  cache.put('alerts', JSON.stringify(payload), 30);
+  cache.put('alerts', JSON.stringify(payload), 10);
   return payload;
 }
 

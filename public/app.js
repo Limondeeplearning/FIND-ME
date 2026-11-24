@@ -26,6 +26,38 @@
   const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const canVibrate = typeof navigator.vibrate === 'function' && !isIOS;
   const wakeSupported = 'wakeLock' in navigator;
+  const isAndroid = /Android/i.test(ua);
+
+  /* In-app browsers (Messenger, Facebook, Instagram…) can't receive push alerts. */
+  const IN_APP = [
+    [/FB_IAB\/MESSENGER|MessengerForiOS|\bOrca-Android|FBAN\/Messenger/i, 'Messenger'],
+    [/FBAN|FBAV|FB_IAB|FBIOS/i, 'Facebook'],
+    [/Instagram/i, 'Instagram'],
+    [/\bLine\//i, 'LINE'],
+    [/Viber/i, 'Viber'],
+    [/MicroMessenger/i, 'WeChat'],
+    [/TikTok|musical_ly|Bytedance/i, 'TikTok'],
+    [/Snapchat/i, 'Snapchat'],
+    [/Telegram/i, 'Telegram'],
+  ];
+  /* Phone-maker browsers (often opened by the built-in QR scanner) — real browsers,
+     but lock-screen alerts are unreliable there, so we recommend Chrome. */
+  const VENDOR = [
+    [/MiuiBrowser|XiaoMi\//i, 'Mi Browser'],
+    [/HeyTapBrowser|OppoBrowser|RealmeBrowser/i, 'the phone browser'],
+    [/VivoBrowser/i, 'vivo Browser'],
+    [/HuaweiBrowser|HONORBrowser/i, 'the phone browser'],
+    [/PHX\//i, 'Phoenix Browser'],
+    [/UCBrowser|UCWEB/i, 'UC Browser'],
+  ];
+  function detectInApp() {
+    for (const [re, name] of IN_APP) if (re.test(ua)) return { name, known: true };
+    if (isAndroid) for (const [re, name] of VENDOR) if (re.test(ua)) return { name, known: false, vendor: true };
+    if (isAndroid && /; wv\)/.test(ua)) return { name: 'another app', known: false };          // Android WebView
+    if (isIOS && !isStandalone && !/Safari\//.test(ua)) return { name: 'another app', known: false }; // iOS WebView
+    return null;
+  }
+  const inApp = detectInApp();
 
   const state = {
     config: { vapidPublicKey: '', eventName: '', eventSubtitle: '' },
@@ -69,7 +101,7 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function show(name) {
-    for (const s of ['loading', 'register', 'waiting', 'pending']) $('screen-' + s).hidden = s !== name;
+    for (const s of ['loading', 'inapp', 'register', 'waiting', 'pending']) $('screen-' + s).hidden = s !== name;
     window.scrollTo(0, 0);
   }
 
@@ -384,7 +416,7 @@
         const seatNow = devices[h];
         if (!seatNow) {
           // Only trust "missing" if the sheet data is newer than our registration (twice in a row).
-          if (gen > (state.reg.serverAt || 0) + 1500) {
+          if (gen > (state.reg.serverAt || 0)) {
             state.missCount += 1;
             if (state.missCount >= 2) return onRemoved('unregistered');
           }
@@ -410,7 +442,7 @@
       }
     } else if (state.claim && devices && h) {
       if (devices[h]) return onGranted(devices[h], gen);
-      if (!claims[h] && gen > (state.claim.serverAt || 0) + 1500) {
+      if (!claims[h] && gen > (state.claim.serverAt || 0)) {
         state.missCount += 1;
         if (state.missCount >= 2) return onRemoved('dismissed');
       } else state.missCount = 0;
@@ -531,6 +563,74 @@
     });
     box.appendChild(grid);
     if (stageBottom) box.appendChild(stage());
+  }
+
+  /* ---------------- opened inside another app ---------------- */
+  function enterInApp() {
+    show('inapp');
+    setConn('ready');
+    const url = location.origin + '/';
+    if (inApp.vendor) {
+      const lede = $('ia-lede');
+      lede.textContent = '';
+      const b1 = document.createElement('b'); b1.textContent = inApp.name;
+      const b2 = document.createElement('b'); b2.textContent = 'Chrome';
+      lede.append('This page opened in ', b1, '. Lock-screen alerts may not reach you there, so please open Find Me in ', b2, '.');
+      $('ia-continue').textContent = 'Continue in ' + inApp.name + ' anyway (you may miss alerts)';
+    } else {
+      $('ia-app').textContent = inApp.name;
+    }
+    $('ia-url').value = url;
+    const steps = $('ia-steps');
+    steps.textContent = '';
+    const add = (html) => {
+      const li = document.createElement('li');
+      const n = document.createElement('span');
+      n.className = 'n';
+      n.textContent = String(steps.children.length + 1);
+      const t = document.createElement('span');
+      t.innerHTML = html; // static strings only
+      li.append(n, t);
+      steps.appendChild(li);
+    };
+    if (isAndroid) {
+      if (!inApp.vendor) $('ia-browser').textContent = 'Chrome';
+      const open = $('ia-open');
+      open.href = 'intent://' + location.host + '/#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' +
+        encodeURIComponent(url) + ';end';
+      open.hidden = false;
+      $('ia-kicker').textContent = "If the button doesn't work";
+      if (inApp.vendor) {
+        add('Open the <b>Chrome</b> app.');
+        add('Tap <b>Copy</b> below, then paste the link into Chrome\'s address bar.');
+        add('Tip: next time, scan with <b>Google Lens</b> (Google app or Chrome\'s camera icon) to open in Chrome directly.');
+      } else {
+        add('Tap the <span class="kbd">⋮</span> menu at the top right.');
+        add('Choose <b>Open in Chrome</b> or <b>Open in browser</b>.');
+      }
+    } else {
+      $('ia-browser').textContent = 'Safari';
+      $('ia-open').hidden = true;
+      $('ia-kicker').textContent = 'How to open it';
+      add('Tap <span class="kbd">•••</span> at the top right, or the <b>Share</b> / compass icon at the bottom.');
+      add('Choose <b>Open in Safari</b> (or <b>Open in browser</b>).');
+      add('In Safari, tap <b>Share → Add to Home Screen</b>, then open Find Me from your Home Screen.');
+    }
+    // Unknown web views might be a real browser we didn't recognise — allow a way through.
+    $('ia-continue').hidden = inApp.known;
+  }
+
+  async function copyLink() {
+    const input = $('ia-url');
+    try {
+      await navigator.clipboard.writeText(input.value);
+      toast('Link copied. Paste it into your browser.');
+    } catch {
+      input.focus();
+      input.select();
+      try { document.execCommand('copy'); toast('Link copied. Paste it into your browser.'); }
+      catch { toast('Press and hold the link to copy it.'); }
+    }
   }
 
   /* ---------------- registration flow ---------------- */
@@ -753,6 +853,8 @@
     $('ack-btn').addEventListener('click', onAck);
     $('close-btn').addEventListener('click', closeAlert);
     $('n-btn').addEventListener('click', onNoticeButton);
+    $('ia-copy').addEventListener('click', copyLink);
+    $('ia-continue').addEventListener('click', () => { store.set('findme.iaSkip', true); enterRegister(); });
     $('test-btn').addEventListener('click', onTest);
     $('change-btn').addEventListener('click', onChangeSeat);
     $('notif-btn').addEventListener('click', onEnableNotifications);
@@ -804,6 +906,8 @@
       if (fromNotif && !ackedSet().has(fromNotif)) triggerAlert(fromNotif);
     } else if (state.claim) {
       enterPending();
+    } else if (inApp && !store.get('findme.iaSkip', false)) {
+      enterInApp();
     } else {
       enterRegister();
     }
